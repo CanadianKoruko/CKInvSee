@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "id": "ckinvsee",
+  "version": "${version}",
+  "name": "CK Inv See",
+  "description": "Allows you to see offline + online players inventories + echests",
+  "authors": [
+    "KoromaruKoruko",
+    "CanadianBaconBoi"
+  ],
+  "contact": {
+    "homepage": "https://fabricmc.net/",
+    "sources": "https://github.com/FabricMC/fabric-example-mod"
+  },
+  "license": "GNU GPLv3",
+  "icon": "assets/ckinvsee/icon.png",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "net.ckinvsee.fabric.CKInvSeeModFabric"
+    ]
+  },
+  "mixins": [
+  ],
+  "depends": {
+    "fabric": "*",
+    "minecraft": ">=1.18.2",
+    "architectury": ">=4.11.91",
+    "fabric-language-kotlin": ">=1.10.8+kotlin.1.9.0"
+  }
+}

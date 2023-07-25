@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "mixin": [
+  ],
+  "quilt_loader": {
+    "group": "${group}",
+    "id": "ckinvsee",
+    "version": "${version}",
+    "name": "CK Inv See",
+    "description": "Allows you to see offline + online players inventories + echests",
+    "authors": [
+      "KoromaruKoruko",
+      "CanadianBaconBoi"
+    ],
+    "contact": {},
+    "license": "GNU GPLv3",
+    "icon": "assets/ckinvsee/icon.png",
+    "intermediate_mappings": "net.fabricmc:intermediary",
+    "environment": "*",
+    "entrypoints": {
+      "init": [
+        "net.ckinvsee.quilt.ExampleModQuilt"
+      ]
+    },
+    "depends": [
+      {
+        "id": "quilt_loader",
+        "version": "*"
+      },
+      {
+        "id": "quilt_base",
+        "version": "*"
+      },
+      {
+        "id": "minecraft",
+        "version": ">=1.18.2"
+      },
+      {
+        "id": "architectury",
+        "version": ">=4.11.91"
+      },
+      {
+        "id": "qkl",
+        "versions": ">=0.1.4-"
+      }
+    ]
+  }
+}
