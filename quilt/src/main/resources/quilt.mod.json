@@ -42,6 +42,12 @@
       {
         "id": "qkl",
         "versions": ">=0.1.4-"
+      },
+      {
+        "id": "luckperms",
+        "versions": ">=5.4-",
+        "optional": true,
+        "environment": "dedicated_server"
       }
     ]
   }

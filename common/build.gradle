@@ -16,6 +16,9 @@ dependencies {
     // Remove the next line if you don't want to depend on the API
     modApi "dev.architectury:architectury:${rootProject.architectury_version}"
 
+    // luckperms (wanna try and have this be an optional dep)
+    compileOnly 'net.luckperms:api:5.4'
+
     // Kotlin
     implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8"
 }

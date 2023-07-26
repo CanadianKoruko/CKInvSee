@@ -40,3 +40,10 @@ mandatory = true
 versionRange = "[3,)"
 ordering = "AFTER"
 side = "BOTH"
+
+[[dependencies.ckinvsee]]
+modId = "luckperms"
+mandatory = false
+versionRange = "[5.4,)"
+ordering = "AFTER"
+side = "SERVER"

@@ -7,8 +7,13 @@ import com.mojang.brigadier.builder.LiteralArgumentBuilder
 import com.mojang.brigadier.builder.LiteralArgumentBuilder.literal
 import com.mojang.brigadier.builder.RequiredArgumentBuilder.argument
 import dev.architectury.event.events.common.CommandRegistrationEvent
+import dev.architectury.event.events.common.LifecycleEvent
 import dev.architectury.event.events.common.PlayerEvent
 import dev.architectury.event.events.common.TickEvent
+import net.ckinvsee.permissions.CKPermissions
+import net.ckinvsee.permissions.IPermissionProvider
+import net.ckinvsee.permissions.LPPermissionProvider
+import net.ckinvsee.permissions.MCPermissionProvider
 import net.minecraft.server.command.CommandManager
 import net.minecraft.server.command.ServerCommandSource
 import net.minecraft.server.dedicated.ServerPropertiesLoader
@@ -27,6 +32,9 @@ object CKInvSeeKotlin {
     const val MOD_ID = "ckinvsee"
     internal val Log: Logger = LogManager.getLogger(CKInvSee.MOD_ID)
 
+    // we don't expect anyone to run a command before the server started event fires!
+    private lateinit var PermsProvider : IPermissionProvider
+
     private var level_name: String? = null
     fun getLevelName(): String {
         if (level_name == null) {
@@ -40,6 +48,19 @@ object CKInvSeeKotlin {
     @JvmStatic
     fun init() {
         Log.log(Level.DEBUG, "Hello from CK Inv See!")
+
+        LifecycleEvent.SERVER_STARTED.register {
+            _ ->
+
+            // check if luckperms is available
+            PermsProvider = if(LPPermissionProvider.isAvailable()) {
+                Log.log(Level.INFO, "CKInvSee is using the LuckPerms permission system!")
+                LPPermissionProvider()
+            } else {
+                Log.log(Level.INFO, "CKInvSee is using the default Minecraft permission system!")
+                MCPermissionProvider()
+            }
+        }
         CommandRegistrationEvent.EVENT.register { dispatcher, selection ->
             registerCommands(dispatcher, selection)
         }
@@ -63,6 +84,7 @@ object CKInvSeeKotlin {
         }
 
         Log.log(Level.DEBUG, "Registering Commands")
+        val RedColor = Style.EMPTY.withColor(Formatting.RED)
 
         val invseeCMD = Command<ServerCommandSource> { ctx ->
             val server = ctx.source.server
@@ -96,20 +118,18 @@ object CKInvSeeKotlin {
             }
 
             if (targetUUID == null) {
-                ctx.source.sendFeedback(
+                ctx.source.sendError(
                     LiteralText(
                         "Unable to find player/UUID "
-                    ).fillStyle(
-                        Style.EMPTY.withColor(Formatting.RED)
-                    ).append(
+                    ).fillStyle(RedColor).append(
                         LiteralText(
                             target
                         ).fillStyle(Style.EMPTY.withColor(Formatting.YELLOW))
                     ).append(
                         LiteralText(
                             "!"
-                        ).fillStyle(Style.EMPTY.withColor(Formatting.RED))
-                    ), false
+                        ).fillStyle(RedColor)
+                    )
                 )
 
                 return@Command 1
@@ -131,10 +151,12 @@ object CKInvSeeKotlin {
             0
         }
         val registerInvsee = { base: LiteralArgumentBuilder<ServerCommandSource> ->
-            base.then(
-                argument<ServerCommandSource, String?>("target_player", StringArgumentType.string())
-                    .executes(invseeCMD)
-            )
+            base
+                .requires { source -> PermsProvider.hasPermission(source.player, CKPermissions.CMDInvSee) }
+                .then(
+                    argument<ServerCommandSource, String?>("target_player", StringArgumentType.string())
+                        .executes(invseeCMD)
+                )
 
             base
         }
@@ -143,37 +165,6 @@ object CKInvSeeKotlin {
         dispatcher.register(registerInvsee(literal("ck_invsee")))
 
         //TODO("ck_endersee/endersee")
-
-        /*
-        dispatcher.register(
-            literal<ServerCommandSource?>("print_inv")
-                .executes {
-                    ctx ->
-
-                    val player = ctx.source.player
-
-                    Log.log(Level.INFO, "Armor:")
-                    player.inventory.armor.forEachIndexed{
-                        index, itemStack ->
-                        Log.log(Level.INFO, "$index => ${itemStack.item.name.string} x${itemStack.count}")
-                    }
-                    Log.log(Level.INFO, "OffHand:")
-                    player.inventory.offHand.forEachIndexed {
-                        index, itemStack ->
-                        Log.log(Level.INFO, "$index => ${itemStack.item.name.string} x${itemStack.count}")
-                    }
-                    Log.log(Level.INFO, "mainHandStack => ${player.inventory.mainHandStack.item.name.string} x${player.inventory.mainHandStack.count}")
-                    Log.log(Level.INFO, "Main:")
-                    player.inventory.main.forEachIndexed {
-                            index, itemStack ->
-                        Log.log(Level.INFO, "$index => ${itemStack.item.name.string} x${itemStack.count}")
-                    }
-
-
-                    0
-                }
-        )
-        */
 
     }
 }
