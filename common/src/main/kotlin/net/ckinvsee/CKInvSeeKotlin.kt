@@ -6,10 +6,10 @@ import com.mojang.brigadier.arguments.StringArgumentType
 import com.mojang.brigadier.builder.LiteralArgumentBuilder
 import com.mojang.brigadier.builder.LiteralArgumentBuilder.literal
 import com.mojang.brigadier.builder.RequiredArgumentBuilder.argument
+import com.mojang.brigadier.context.CommandContext
 import dev.architectury.event.events.common.CommandRegistrationEvent
 import dev.architectury.event.events.common.LifecycleEvent
 import dev.architectury.event.events.common.PlayerEvent
-import dev.architectury.event.events.common.TickEvent
 import net.ckinvsee.permissions.CKPermissions
 import net.ckinvsee.permissions.IPermissionProvider
 import net.ckinvsee.permissions.LPPermissionProvider
@@ -31,9 +31,11 @@ import java.util.*
 object CKInvSeeKotlin {
     const val MOD_ID = "ckinvsee"
     internal val Log: Logger = LogManager.getLogger(CKInvSee.MOD_ID)
+    private val RedColor = Style.EMPTY.withColor(Formatting.RED)
 
     // we don't expect anyone to run a command before the server started event fires!
-    private lateinit var PermsProvider : IPermissionProvider
+    internal lateinit var PermsProvider : IPermissionProvider
+
 
     private var level_name: String? = null
     fun getLevelName(): String {
@@ -64,9 +66,6 @@ object CKInvSeeKotlin {
         CommandRegistrationEvent.EVENT.register { dispatcher, selection ->
             registerCommands(dispatcher, selection)
         }
-        TickEvent.SERVER_PRE.register { _ ->
-            InvSeeScreenManager.tick()
-        }
         PlayerEvent.PLAYER_JOIN.register { player ->
             InvSeeScreenManager.onPlayerJoin(player)
         }
@@ -84,9 +83,9 @@ object CKInvSeeKotlin {
         }
 
         Log.log(Level.DEBUG, "Registering Commands")
-        val RedColor = Style.EMPTY.withColor(Formatting.RED)
 
-        val invseeCMD = Command<ServerCommandSource> { ctx ->
+        val tryOpenScreen = {
+            ctx: CommandContext<ServerCommandSource> ->
             val server = ctx.source.server
             val caller = ctx.source.player
             val target = ctx.getArgument("target_player", String::class.java)
@@ -117,6 +116,7 @@ object CKInvSeeKotlin {
                 }
             }
 
+            //verify that we found the target
             if (targetUUID == null) {
                 ctx.source.sendError(
                     LiteralText(
@@ -132,39 +132,63 @@ object CKInvSeeKotlin {
                     )
                 )
 
-                return@Command 1
+                null
             }
-
-
-            if (isOffline) {
+            // open offline screen
+            else if (isOffline) {
                 InvSeeScreenManager.openScreen(caller, targetUUID)
-            } else {
-                return@Command server.playerManager.getPlayer(targetUUID)
+            }
+            // open online screen
+            else {
+                server.playerManager.getPlayer(targetUUID)
                     ?.let {
-                        InvSeeScreenManager.openScreen(caller, it)
-                        0
+                        return@let InvSeeScreenManager.openScreen(caller, it)
                     } ?: run {
                     ctx.source.sendError(Text.of("Failed to get Player from playerManager!"))
-                    1
+                    null
                 }
             }
-            0
         }
-        val registerInvsee = { base: LiteralArgumentBuilder<ServerCommandSource> ->
+
+        val invseeCMD = Command { ctx ->
+            val screen = tryOpenScreen(ctx)
+            if (screen == null) {
+                1
+            }
+            else {
+                // open player inventory
+                screen.switchToPlayerInventory()
+                0
+            }
+        }
+        val withArgsAndPerm = { base: LiteralArgumentBuilder<ServerCommandSource>, perm: CKPermissions, cmd: Command<ServerCommandSource> ->
             base
-                .requires { source -> PermsProvider.hasPermission(source.player, CKPermissions.CMDInvSee) }
+                .requires { source -> PermsProvider.hasPermission(source.player, perm) }
                 .then(
                     argument<ServerCommandSource, String?>("target_player", StringArgumentType.string())
-                        .executes(invseeCMD)
+                        .executes(cmd)
                 )
 
             base
         }
 
-        dispatcher.register(registerInvsee(literal("invsee")))
-        dispatcher.register(registerInvsee(literal("ck_invsee")))
+        val enderseeCMD = Command { ctx ->
+            val screen = tryOpenScreen(ctx)
+            if (screen == null) {
+                1
+            }
+            else {
+                // open player inventory
+                screen.switchToEChestInventory()
+                0
+            }
+        }
 
-        //TODO("ck_endersee/endersee")
+        dispatcher.register(withArgsAndPerm(literal("invsee"), CKPermissions.CMDInvSee, invseeCMD))
+        dispatcher.register(withArgsAndPerm(literal("ck_invsee"), CKPermissions.CMDInvSee, invseeCMD))
+
+        dispatcher.register(withArgsAndPerm(literal("endersee"), CKPermissions.CMDEnderSee, enderseeCMD))
+        dispatcher.register(withArgsAndPerm(literal("ck_endersee"), CKPermissions.CMDEnderSee, enderseeCMD))
 
     }
 }

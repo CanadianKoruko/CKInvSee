@@ -1,10 +1,6 @@
 package net.ckinvsee
 
-import it.unimi.dsi.fastutil.ints.Int2IntArrayMap
-import net.ckinvsee.invproviders.IPlayerInventory
-import net.ckinvsee.invproviders.OfflinePlayerInventory
-import net.ckinvsee.invproviders.OnlinePlayerInventory
-import net.ckinvsee.util.IntRange
+import net.ckinvsee.invproviders.*
 import net.minecraft.entity.player.PlayerEntity
 import net.minecraft.entity.player.PlayerInventory
 import net.minecraft.inventory.Inventory
@@ -13,9 +9,13 @@ import net.minecraft.item.Items
 import net.minecraft.screen.GenericContainerScreenHandler
 import net.minecraft.screen.NamedScreenHandlerFactory
 import net.minecraft.screen.ScreenHandler
-import net.minecraft.screen.ScreenHandlerListener
+import net.minecraft.screen.slot.Slot
 import net.minecraft.server.network.ServerPlayerEntity
+import net.minecraft.text.LiteralText
+import net.minecraft.text.Style
 import net.minecraft.text.Text
+import net.minecraft.util.Formatting
+import net.minecraft.util.Util
 import org.apache.logging.log4j.Level
 import java.util.*
 
@@ -43,25 +43,11 @@ internal class InvSeeScreenController(
     }
 
     private var isClosing = false
-    private var isDirty = false
-    private fun markDirty() {
-        if (!isDirty) {
-            isDirty = true
-            InvSeeScreenManager.markDirty(this)
-        }
-    }
-
-    // events
-    internal fun update() {
-        handler.updateToClient()
-        isDirty = false
-    }
 
     internal fun playerJoined(player: ServerPlayerEntity) {
         val uuid = player.uuid
 
         if (callee.uuid == uuid) {
-            @Suppress("UsePropertyAccessSyntax")
             CKInvSeeKotlin.Log.log(
                 Level.WARN,
                 "Received PlayerJoined on InvSeeController for player: ${player.name.getString()} ($uuid)"
@@ -93,43 +79,22 @@ internal class InvSeeScreenController(
         }
     }
 
-    private class ProxyInventory(var playerInv: IPlayerInventory, private val controller: InvSeeScreenController) :
-        Inventory {
+
+    /// Switches the screen to the Ender Chest Inventory
+    fun switchToEChestInventory() { proxyInv.switchTo(ScreenMappings.EnderInv) }
+    /// Switches the screen to the Player Inventory
+    fun switchToPlayerInventory() { proxyInv.switchTo(ScreenMappings.PlayerInv) }
+
+    private class ProxyInventory(var playerInv: IPlayerInventory, private val controller: InvSeeScreenController) : Inventory {
         companion object {
-            //TODO("Implement Curios")
-
-            @Suppress("UNUSED")
-            val FirstRow = IntRange(0, 8)
-            @Suppress("UNUSED")
-            val SecondRow = IntRange(9, 17)
-            val ThirdRow = IntRange(18, 26)
-            val FourthRow = IntRange(27, 35)
-            val FifthRow = IntRange(36, 44)
-            val SixthRow = IntRange(45, 53)
-
-            val borderItemStack = ItemStack(Items.BARRIER, 1)
-            val toCommonSlotsMap = Int2IntArrayMap(
-                mapOf(
-                    0 to IPlayerInventory.SLOT_ARMOR_HEAD,
-                    1 to IPlayerInventory.SLOT_ARMOR_CHEST,
-                    2 to IPlayerInventory.SLOT_ARMOR_LEGS,
-                    3 to IPlayerInventory.SLOT_ARMOR_FEET,
-                    5 to IPlayerInventory.SLOT_OFFHAND
-                ).plus(
-                    ThirdRow.mapRanges(IPlayerInventory.FirstRow)
-                ).plus(
-                    FourthRow.mapRanges(IPlayerInventory.SecondRow)
-                ).plus(
-                    FifthRow.mapRanges(IPlayerInventory.ThirdRow)
-                ).plus(
-                    SixthRow.mapRanges(IPlayerInventory.HotbarRow)
-                )
-            )
-            @Suppress("UNUSED")
-            val fromCommonSlotsMap =
-                Int2IntArrayMap(OfflinePlayerInventory.toCommonSlotsMap.map { pair -> Pair(pair.value, pair.key) }
-                    .toMap())
+            val borderItemStack = ItemStack(Items.GRAY_STAINED_GLASS_PANE, 1)
+            val selectionButtonItemStack = ItemStack(Items.BARRIER, 1)
         }
+
+        // inventory selection mapper (lets us switch between multiple inventory screens)
+        private var invSelect: InventorySelect = ScreenMappings.PlayerInv
+
+        private var inInvSelection = true
 
         override fun onClose(player: PlayerEntity?) {
             if (player?.uuid == controller.callee.uuid) {
@@ -139,36 +104,81 @@ internal class InvSeeScreenController(
             }
         }
 
+        /// Switch to Player Inventory
         fun changeInventoryTo(newInventory: IPlayerInventory) {
-            val cacheInv = playerInv.getInventory()
+            ScreenMappings.SupportedInventories.forEach {
+                mapping -> mapping.setInv(newInventory, mapping.getInv(playerInv))
+            }
+
             playerInv = newInventory
-            newInventory.setInventory(cacheInv)
-            markDirty()
+        }
+
+        /// Switch to Specified Mappings, (due note, custom mappings are not retained cross player join/leaves)
+        fun switchTo(select: InventorySelect) {
+            if(select.hasPerms(controller.callee)) {
+                invSelect = select
+                inInvSelection = false
+            }
+            else {
+                controller.callee.sendSystemMessage(
+                    LiteralText("You do not have the required permissions!").fillStyle(Style.EMPTY.withColor(Formatting.RED)),
+                    Util.NIL_UUID
+                    )
+            }
+        }
+
+        /// Switches to the inventory selection screen
+        fun openInvSelection() {
+            inInvSelection = true
         }
 
         override fun clear() {
-            playerInv.setInventory(Array(IPlayerInventory.InventorySlots) { ItemStack.EMPTY })
-            markDirty()
+            if (inInvSelection) {
+                return
+            }
+            invSelect.setInv(playerInv, Array(IPlayerInventory.InventorySlots) { ItemStack.EMPTY })
         }
 
         override fun size(): Int {
-            return 54
+            return 54 // static 9x6 chest size
         }
 
         override fun isEmpty(): Boolean {
-            return playerInv.getInventory().firstOrNull { item -> !item.isEmpty } != null
+            if(inInvSelection) {
+                return false
+            }
+            return invSelect.getInv(playerInv).firstOrNull { item -> !item.isEmpty } != null
         }
 
         override fun getStack(slot: Int): ItemStack {
-            return playerInv.getInvSlot(toCommonSlotsMap.getOrElse(slot) { return borderItemStack })
+            if (inInvSelection) {
+                val selection = ScreenMappings.SupportedInventories.getOrNull(slot) ?: return ItemStack.EMPTY
+
+                val item = ItemStack(selection.item, 1)
+                item.setCustomName(Text.of(selection.name))
+
+                return item
+            } else if (slot == ScreenMappings.ToSelectMenu) {
+                return selectionButtonItemStack
+            }
+
+            return invSelect.getSlot(playerInv, invSelect.slotMap.getOrElse(slot) { return@getStack borderItemStack })
         }
 
         override fun removeStack(slot: Int, amount: Int): ItemStack {
-            val index = toCommonSlotsMap.getOrElse(slot) { markDirty(); return ItemStack.EMPTY }
-            val stack = playerInv.getInvSlot(index)
+            if(inInvSelection) {
+                selectionStackClick(slot)
+                return ItemStack.EMPTY
+            } else if (slot == ScreenMappings.ToSelectMenu) {
+                openInvSelection()
+                return ItemStack.EMPTY
+            }
+
+            val index = invSelect.slotMap.getOrElse(slot) { return ItemStack.EMPTY }
+            val stack = invSelect.getSlot(playerInv, index)
 
             if (amount >= stack.count) {
-                playerInv.setInvSlot(index, ItemStack.EMPTY)
+                invSelect.setSlot(playerInv, index, ItemStack.EMPTY)
                 return stack
             }
 
@@ -176,24 +186,51 @@ internal class InvSeeScreenController(
             newStack.count = amount
             stack.count = stack.count - amount
 
-            playerInv.setInvSlot(index, stack)
+            invSelect.setSlot(playerInv, index, stack)
             return newStack
         }
 
         override fun removeStack(slot: Int): ItemStack {
-            val index = toCommonSlotsMap.getOrElse(slot) { markDirty(); return ItemStack.EMPTY }
-            val stack = playerInv.getInvSlot(index)
-            playerInv.setInvSlot(index, ItemStack.EMPTY)
+            if (inInvSelection) {
+                selectionStackClick(slot)
+                return ItemStack.EMPTY
+            } else if (slot == ScreenMappings.ToSelectMenu) {
+                openInvSelection()
+                return ItemStack.EMPTY
+            }
+
+            val index = invSelect.slotMap.getOrElse(slot) { return ItemStack.EMPTY }
+            val stack = invSelect.getSlot(playerInv, index)
+            invSelect.setSlot(playerInv, index, ItemStack.EMPTY)
             return stack
         }
 
-        override fun setStack(slot: Int, stack: ItemStack?) {
-            val index = toCommonSlotsMap.getOrElse(slot) { markDirty(); return }
-            playerInv.setInvSlot(index, stack ?: ItemStack.EMPTY)
+        fun selectionStackClick(slot: Int) {
+            val selection = ScreenMappings.SupportedInventories.getOrNull(slot) ?: return
+            switchTo(selection)
         }
 
-        override fun markDirty() {
-            controller.markDirty()
+        override fun setStack(slot: Int, stack: ItemStack?) {
+            if(!inInvSelection && isValidItemForSlot(slot, stack)) {
+                val index = invSelect.slotMap.getOrElse(slot) { return }
+                invSelect.setSlot(playerInv, index, stack ?: ItemStack.EMPTY)
+            }
+        }
+
+        override fun markDirty() { /*do nothing*/ }
+
+        fun isValidItemForSlot(slot: Int, stack: ItemStack?): Boolean {
+            if (inInvSelection) {
+                return stack?.isEmpty ?: true
+            }
+
+            if (stack == null)
+                return true
+            if (stack.isEmpty)
+                return true
+
+            val index = invSelect.slotMap.getOrElse(slot) {return false}
+            return  invSelect.isValid(index, stack)
         }
 
         override fun canPlayerUse(player: PlayerEntity?): Boolean {
@@ -201,21 +238,15 @@ internal class InvSeeScreenController(
         }
     }
 
-    class HandlerListener(private val controller: InvSeeScreenController) : ScreenHandlerListener {
-        override fun onSlotUpdate(handler: ScreenHandler?, slotId: Int, stack: ItemStack?) {
-            if (handler == null) {
-                controller.close()
-            } else {
-                controller.markDirty()
-            }
+    private class ProxySlot(val slotid: Int, val proxyInv: ProxyInventory, x: Int, y: Int) : Slot(
+        proxyInv,
+        slotid,
+        x,
+        y
+    ) {
+        override fun canInsert(stack: ItemStack?): Boolean {
+            return proxyInv.isValidItemForSlot(slotid, stack)
         }
-
-        override fun onPropertyUpdate(handler: ScreenHandler?, property: Int, value: Int) {
-            if (handler == null) {
-                controller.close()
-            }
-        }
-
     }
 
     class ScreenFactory(private val controller: InvSeeScreenController) : NamedScreenHandlerFactory {
@@ -223,9 +254,18 @@ internal class InvSeeScreenController(
             if (player?.uuid == controller.callee.uuid) {
 
                 controller.handler = GenericContainerScreenHandler.createGeneric9x6(syncId, inv, controller.proxyInv)
-                controller.handler.enableSyncing()
                 controller.handler.sendContentUpdates()
-                controller.handler.addListener(HandlerListener(controller))
+
+                // we need to override the container slots, to inject our restrictions for those slots
+                controller.handler.slots.replaceAll { slot ->
+                    if(slot.inventory == controller.proxyInv) {
+                        ProxySlot(slot.index, controller.proxyInv, slot.x, slot.y)
+                    }
+                    else
+                    {
+                        slot
+                    }
+                }
 
                 return controller.handler
             } else {

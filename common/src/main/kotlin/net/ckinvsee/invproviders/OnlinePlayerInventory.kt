@@ -4,8 +4,9 @@ import it.unimi.dsi.fastutil.ints.Int2IntArrayMap
 import net.ckinvsee.util.IntRange
 import net.minecraft.item.ItemStack
 import net.minecraft.server.network.ServerPlayerEntity
+import java.util.*
 
-class OnlinePlayerInventory(private val player: ServerPlayerEntity) : IPlayerInventory {
+class OnlinePlayerInventory(val player: ServerPlayerEntity) : IPlayerInventory {
     companion object {
         val HotbarRow = IntRange(0, 8)
         val FirstRow = IntRange(9, 17)
@@ -25,9 +26,18 @@ class OnlinePlayerInventory(private val player: ServerPlayerEntity) : IPlayerInv
         val fromCommonSlotsMap = Int2IntArrayMap(toCommonSlotsMap.map { pair -> Pair(pair.value, pair.key) }.toMap())
     }
 
+    override fun isOffline(): Boolean {
+        return false
+    }
+
+
+    override fun getPlayerUUID(): UUID {
+        return player.uuid
+    }
+
     override fun getInventory(): Array<ItemStack> {
-        return Array(IPlayerInventory.InventorySlots) { index ->
-            getInvSlot(index)
+        return Array(IPlayerInventory.InventorySlots) {
+            index -> getInvSlot(index).copy()
         }
     }
 
@@ -100,4 +110,26 @@ class OnlinePlayerInventory(private val player: ServerPlayerEntity) : IPlayerInv
             }
         }
     }
+
+    // Ender Chest -------------------------------------------------
+    override fun getEnderInventory(): Array<ItemStack> {
+        return Array(IPlayerInventory.EnderSlots) {
+                index -> player.enderChestInventory.getStack(index).copy()
+        }
+    }
+
+    override fun setEnderInventory(inv: Array<ItemStack>) {
+        inv.forEachIndexed {
+            index, itemStack -> player.enderChestInventory.setStack(index, itemStack)
+        }
+    }
+
+    override fun getEnderSlot(slotId: Int): ItemStack {
+        return player.enderChestInventory.getStack(slotId).copy()
+    }
+
+    override fun setEnderSlot(slotId: Int, item: ItemStack) {
+        player.enderChestInventory.setStack(slotId, item)
+    }
+
 }

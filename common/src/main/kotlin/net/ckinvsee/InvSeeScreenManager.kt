@@ -3,13 +3,17 @@ package net.ckinvsee
 import net.minecraft.server.network.ServerPlayerEntity
 import java.util.*
 
-object InvSeeScreenManager {
-    fun openScreen(caller: ServerPlayerEntity, target: UUID) {
-        registerController(InvSeeScreenController.openAsOffline(caller, target))
+internal object InvSeeScreenManager {
+    fun openScreen(caller: ServerPlayerEntity, target: UUID) : InvSeeScreenController {
+        val controller = InvSeeScreenController.openAsOffline(caller, target)
+        registerController(controller)
+        return controller
     }
 
-    fun openScreen(caller: ServerPlayerEntity, target: ServerPlayerEntity) {
-        registerController(InvSeeScreenController.openAsOnline(caller, target))
+    fun openScreen(caller: ServerPlayerEntity, target: ServerPlayerEntity) : InvSeeScreenController {
+        val controller = InvSeeScreenController.openAsOnline(caller, target)
+        registerController(controller)
+        return controller
     }
 
     private fun registerController(controller: InvSeeScreenController) {
@@ -20,14 +24,8 @@ object InvSeeScreenManager {
 
     private val controllerList = LinkedList<InvSeeScreenController>()
     private val controllerTargetLookup = HashMap<UUID, LinkedList<InvSeeScreenController>>()
-    private val dirtyList = LinkedList<InvSeeScreenController>()
-
-    internal fun markDirty(controller: InvSeeScreenController) {
-        dirtyList.add(controller)
-    }
 
     internal fun screenClosed(controller: InvSeeScreenController) {
-        dirtyList.remove(controller)
         controllerTargetLookup[controller.callee.uuid]?.let { controllers ->
             controllers.remove(controller)
             if (controllers.isEmpty()) {
@@ -42,13 +40,6 @@ object InvSeeScreenManager {
         }
     }
 
-
-    internal fun tick() {
-        dirtyList.forEach() { controller ->
-            controller.update()
-        }
-        dirtyList.clear()
-    }
 
     internal fun onPlayerJoin(player: ServerPlayerEntity) {
         val uuid = player.uuid

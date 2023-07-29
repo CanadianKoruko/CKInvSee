@@ -14,15 +14,11 @@ import java.io.File
 import java.io.FileNotFoundException
 import java.util.*
 
-class OfflinePlayerInventory(private val playerdata: File) : IPlayerInventory {
+class OfflinePlayerInventory(val uuid: UUID) : IPlayerInventory {
 
     companion object {
         fun byUserCacheUUID(uuid: UUID): OfflinePlayerInventory {
-            val file = File("${CKInvSeeKotlin.getLevelName()}/playerdata/$uuid.dat")
-            if (!file.exists()) {
-                throw FileNotFoundException("playerdata file not found!")
-            }
-            return OfflinePlayerInventory(file)
+            return OfflinePlayerInventory(uuid)
         }
 
         const val SLOT_ARMOR_HEAD = 103
@@ -59,38 +55,58 @@ class OfflinePlayerInventory(private val playerdata: File) : IPlayerInventory {
         val fromCommonSlotsMap = Int2IntArrayMap(toCommonSlotsMap.map { pair -> Pair(pair.value, pair.key) }.toMap())
     }
 
-    private val data: NbtCompound
-    private var inventory: AbstractNbtList<NbtCompound>
+    private val playerFile: File = File("${CKInvSeeKotlin.getLevelName()}/playerdata/$uuid.dat")
+    val data: NbtCompound
+    val inventory: AbstractNbtList<NbtCompound>
+    val echest: AbstractNbtList<NbtCompound>
 
     init {
-        val nbtdata = NbtIo.readCompressed(playerdata)
-        if (nbtdata != null) {
-            data = nbtdata
+        if (!playerFile.exists()) {
+            throw FileNotFoundException("playerdata file not found!")
+        }
+
+        val nbtData = NbtIo.readCompressed(playerFile)
+        if (nbtData != null) {
+            data = nbtData
+
 
             @Suppress("UNCHECKED_CAST")
             inventory = data.get("Inventory") as? AbstractNbtList<NbtCompound>
-                ?: throw Exception("unable to create AbstractNbtList from Inventory List")
+                ?: throw Exception("unable to create AbstractNbtList from Inventory List!")
+            @Suppress("UNCHECKED_CAST")
+            echest = data.get("EnderItems") as? AbstractNbtList<NbtCompound>
+                ?: throw Exception("Unable to create AbstractNBTList from EnderItems List!")
+
         } else {
             CKInvSeeKotlin.Log.log(Level.ERROR, "failed to read nbt of playerdata!")
             throw Exception("failed to read nbt of playerdata!")
         }
     }
 
+    override fun isOffline(): Boolean {
+        return true
+    }
+
+    override fun getPlayerUUID(): UUID {
+        return uuid
+    }
+
+
+    /// saves any changes to disk
+    fun save() {
+        NbtIo.writeCompressed(data, playerFile)
+    }
+
 
     override fun getInventory(): Array<ItemStack> {
-        val items = LinkedList<Pair<Int, ItemStack>>()
-
-        // load saved inventory
-        inventory.forEach { item ->
-            val itemStack = toItemStack(item as NbtCompound)
-
-            //remap slot to Common Slots and insert
-            items.addLast(Pair(toCommonSlotsMap.getOrElse(itemStack.second) { itemStack.second }, itemStack.first))
-        }
+        val items = toItemSlotList(inventory)
 
         // create inventory array
-        return Array(IPlayerInventory.InventorySlots) { index ->
-            items.firstOrNull { item -> item.first == index }?.second ?: ItemStack.EMPTY
+        return Array(IPlayerInventory.InventorySlots) {
+            index ->
+            items.firstOrNull { item -> (toCommonSlotsMap.getOrElse(item.first) {item.first}) == index }
+                ?.second
+            ?: ItemStack.EMPTY
         }
     }
 
@@ -99,44 +115,109 @@ class OfflinePlayerInventory(private val playerdata: File) : IPlayerInventory {
             throw IllegalArgumentException("inv is not a Common Mapped Inventory!")
         }
 
-        // wipe inventory
+        // wipe old inventory
         inventory.clear()
 
-        // create saved inventory
+        // fill with new inventory
         inv.forEachIndexed() { slot, item ->
             if (!item.isEmpty) {
-                val itm = toNBT(item, fromCommonSlotsMap.getOrElse(slot) { slot })
-                inventory.add(itm)
+                inventory.add(toNBT(item, fromCommonSlotsMap.getOrElse(slot) { slot }))
             }
         }
-
-
-        data.put("Inventory", inventory)
     }
 
     override fun getInvSlot(slotId: Int): ItemStack {
         val index = fromCommonSlotsMap.getOrElse(slotId) { throw IllegalArgumentException("Invalid Common Slot Id") }
 
-        return tryFindExistingNBTSlot(index)?.let { keyIndex ->
+        return tryFindExistingNBTSlot(inventory, index)?.let { keyIndex ->
             toItemStack(inventory[keyIndex]).first
         } ?: ItemStack.EMPTY
     }
 
     override fun setInvSlot(slotId: Int, item: ItemStack) {
         val index = fromCommonSlotsMap.getOrElse(slotId) { throw IllegalArgumentException("Invalid Common Slot Id") }
-        tryFindExistingNBTSlot(index)?.let { keyIndex ->
-            // override slot
-            if (!item.isEmpty) {
-                val itm = toNBT(item, index)
-                inventory[keyIndex] = itm
-            } else {
+        tryFindExistingNBTSlot(inventory, index)?.let {
+            keyIndex ->
+            if (item.isEmpty) {
                 inventory.removeAt(keyIndex)
+            } else {
+                inventory[keyIndex] = toNBT(item, index)
             }
         } ?: run {
             if (!item.isEmpty) {
-                insertAtEnd(item, index)
+                insertAtEnd(inventory, item, index)
             }
         }
+    }
+
+
+    // Ender Chest -------------------------------------------------------------
+    override fun getEnderInventory(): Array<ItemStack> {
+        val items = toItemSlotList(echest)
+
+        return Array(IPlayerInventory.EnderSlots) {
+            index ->
+            items.firstOrNull { item -> item.first == index }
+                ?.second
+            ?: ItemStack.EMPTY
+        }
+    }
+
+    override fun setEnderInventory(inv: Array<ItemStack>) {
+        if (inv.size != IPlayerInventory.EnderSlots) {
+            throw IllegalArgumentException("inv is not a Common Mapped EnderChest Inventory!")
+        }
+
+        // wipe old inventory
+        echest.clear()
+
+        // fill with new inventory
+        inv.forEachIndexed {
+            slot, item ->
+            if(!item.isEmpty) {
+                echest.add(toNBT(item, slot))
+            }
+        }
+    }
+
+    override fun getEnderSlot(slotId: Int): ItemStack {
+        tryFindExistingNBTSlot(echest, slotId) ?.let {
+            key ->
+            return toItemStack(echest[key]).first
+        } ?: run {
+            return ItemStack.EMPTY
+        }
+    }
+
+    override fun setEnderSlot(slotId: Int, item: ItemStack) {
+        tryFindExistingNBTSlot(echest, slotId) ?.let {
+            keyIndex ->
+            if (item.isEmpty) {
+                echest.removeAt(keyIndex)
+            } else {
+                echest[keyIndex] = toNBT(item, slotId)
+            }
+        } ?: run {
+            if(!item.isEmpty) {
+                insertAtEnd(echest, item, slotId)
+            }
+        }
+    }
+
+
+    // Helpers -----------------------------------------------------------------
+    private fun toItemSlotList(inv: AbstractNbtList<NbtCompound>) : LinkedList<Pair<Int, ItemStack>> {
+        val items = LinkedList<Pair<Int, ItemStack>>()
+
+        // load saved inventory
+        inv.forEach { item ->
+            val itemSlot = toItemStack(item as NbtCompound)
+
+            //remap slot to Common Slots and insert
+            items.addLast(Pair(itemSlot.second, itemSlot.first))
+        }
+
+        return items
     }
 
     private fun toItemStack(nbt: NbtCompound): Pair<ItemStack, Int> {
@@ -163,10 +244,10 @@ class OfflinePlayerInventory(private val playerdata: File) : IPlayerInventory {
         return itm
     }
 
-    private fun tryFindExistingNBTSlot(slotId: Int): Int? {
+    private fun tryFindExistingNBTSlot(inv: AbstractNbtList<NbtCompound>, slotId: Int): Int? {
 
-        for (index in 0 until inventory.size) {
-            val itm = inventory[index]
+        for (index in 0 until inv.size) {
+            val itm = inv[index]
             if (itm.getInt("Slot") == slotId) {
                 return index
             }
@@ -175,15 +256,10 @@ class OfflinePlayerInventory(private val playerdata: File) : IPlayerInventory {
         return null
     }
 
-    private fun insertAtEnd(item: ItemStack, slot: Int) {
+    private fun insertAtEnd(inv: AbstractNbtList<NbtCompound>, item: ItemStack, slot: Int) {
         val itm = toNBT(item, slot)
-        if (!inventory.add(itm)) {
+        if (!inv.add(itm)) {
             CKInvSeeKotlin.Log.log(Level.ERROR, "failed to place item into offline inventory!")
         }
-    }
-
-    /// saves any changes to disk
-    fun save() {
-        NbtIo.writeCompressed(data, playerdata)
     }
 }
