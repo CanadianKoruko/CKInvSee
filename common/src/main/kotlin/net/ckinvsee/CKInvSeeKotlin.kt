@@ -14,6 +14,7 @@ import net.ckinvsee.permissions.CKPermissions
 import net.ckinvsee.permissions.IPermissionProvider
 import net.ckinvsee.permissions.LPPermissionProvider
 import net.ckinvsee.permissions.MCPermissionProvider
+import net.ckinvsee.util.PartialStringLookupTree
 import net.minecraft.server.command.CommandManager
 import net.minecraft.server.command.ServerCommandSource
 import net.minecraft.server.dedicated.ServerPropertiesLoader
@@ -35,9 +36,9 @@ object CKInvSeeKotlin {
     internal val Log: Logger = LogManager.getLogger(CKInvSee.MOD_ID)
     private val RedColor = Style.EMPTY.withColor(Formatting.RED)
 
-    //                                      min|hour|day|days
-    private const val retentionTimeSeconds = 60L*60L*24L*14L
-    private val UsernameCache = HashSet<String>()
+    //                                      min|hour|day|days     (>1Month = full retention)
+    private const val retentionTimeSeconds = 60L*60L*24L*30L
+    private val UsernameLookup = PartialStringLookupTree(HashSet())
 
     // we don't expect anyone to run a command before the server started event fires!
     internal lateinit var PermsProvider : IPermissionProvider
@@ -63,10 +64,11 @@ object CKInvSeeKotlin {
             val bestBeforeTime: Long = ((60L*60L*24L*30L)-retentionTimeSeconds)+Instant.now().epochSecond
             server.userCache.load().forEach { profile ->
                 if (profile.expirationDate.toInstant().epochSecond > bestBeforeTime) {
-                    UsernameCache.add(profile.profile.name)
+                    UsernameLookup.insert(profile.profile.name)
                 }
             }
-            Log.log(Level.INFO, "Loaded ${UsernameCache.size} usernames from cache.")
+            Log.log(Level.INFO, "Loaded ${UsernameLookup.size} usernames from cache.")
+
             // check if luckperms is available
             PermsProvider = if(LPPermissionProvider.isAvailable()) {
                 Log.log(Level.INFO, "CKInvSee is using the LuckPerms permission system!")
@@ -80,7 +82,7 @@ object CKInvSeeKotlin {
             registerCommands(dispatcher, selection)
         }
         PlayerEvent.PLAYER_JOIN.register { player ->
-            UsernameCache.add(player.name.string)
+            UsernameLookup.insert(player.name.string)
             InvSeeScreenManager.onPlayerJoin(player)
         }
         PlayerEvent.PLAYER_QUIT.register { player ->
@@ -181,8 +183,7 @@ object CKInvSeeKotlin {
                 .then(
                     argument<ServerCommandSource, String?>("target_player", StringArgumentType.string())
                         .suggests { _, suggestionsBuilder ->
-                            UsernameCache
-                                .filter { it.startsWith(suggestionsBuilder.remaining, true) }
+                            UsernameLookup.partialLookup(suggestionsBuilder.remaining)
                                 .forEach { username -> suggestionsBuilder.suggest(username) }
                             suggestionsBuilder.buildFuture()
                         }
