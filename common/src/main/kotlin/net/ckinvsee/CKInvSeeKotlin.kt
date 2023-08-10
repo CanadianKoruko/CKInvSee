@@ -25,13 +25,19 @@ import org.apache.logging.log4j.Level
 import org.apache.logging.log4j.LogManager
 import org.apache.logging.log4j.Logger
 import java.nio.file.Path
+import java.time.Instant
 import java.util.*
+import kotlin.collections.HashSet
 
 
 object CKInvSeeKotlin {
     const val MOD_ID = "ckinvsee"
     internal val Log: Logger = LogManager.getLogger(CKInvSee.MOD_ID)
     private val RedColor = Style.EMPTY.withColor(Formatting.RED)
+
+    //                                      min|hour|day|days
+    private const val retentionTimeSeconds = 60L*60L*24L*14L
+    private val UsernameCache = HashSet<String>()
 
     // we don't expect anyone to run a command before the server started event fires!
     internal lateinit var PermsProvider : IPermissionProvider
@@ -52,8 +58,15 @@ object CKInvSeeKotlin {
         Log.log(Level.DEBUG, "Hello from CK Inv See!")
 
         LifecycleEvent.SERVER_STARTED.register {
-            _ ->
-
+            server ->
+            // load usernames to cache from UserCache with retention time
+            val bestBeforeTime: Long = ((60L*60L*24L*30L)-retentionTimeSeconds)+Instant.now().epochSecond
+            server.userCache.load().forEach { profile ->
+                if (profile.expirationDate.toInstant().epochSecond > bestBeforeTime) {
+                    UsernameCache.add(profile.profile.name)
+                }
+            }
+            Log.log(Level.INFO, "Loaded ${UsernameCache.size} usernames from cache.")
             // check if luckperms is available
             PermsProvider = if(LPPermissionProvider.isAvailable()) {
                 Log.log(Level.INFO, "CKInvSee is using the LuckPerms permission system!")
@@ -67,6 +80,7 @@ object CKInvSeeKotlin {
             registerCommands(dispatcher, selection)
         }
         PlayerEvent.PLAYER_JOIN.register { player ->
+            UsernameCache.add(player.name.string)
             InvSeeScreenManager.onPlayerJoin(player)
         }
         PlayerEvent.PLAYER_QUIT.register { player ->
@@ -166,6 +180,12 @@ object CKInvSeeKotlin {
                 .requires { source -> PermsProvider.hasPermission(source.player, perm) }
                 .then(
                     argument<ServerCommandSource, String?>("target_player", StringArgumentType.string())
+                        .suggests { _, suggestionsBuilder ->
+                            UsernameCache
+                                .filter { it.startsWith(suggestionsBuilder.remaining, true) }
+                                .forEach { username -> suggestionsBuilder.suggest(username) }
+                            suggestionsBuilder.buildFuture()
+                        }
                         .executes(cmd)
                 )
 
